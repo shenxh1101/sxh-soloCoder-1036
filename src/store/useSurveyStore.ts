@@ -210,7 +210,17 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
 
   deleteQuestion: (id) => {
     set((state) => {
-      const questions = state.survey.questions.filter(q => q.id !== id);
+      const deletedQuestion = state.survey.questions.find(q => q.id === id);
+      const isGroupDeletion = deletedQuestion?.type === 'group';
+      
+      let questions = state.survey.questions.filter(q => q.id !== id);
+      
+      if (isGroupDeletion) {
+        questions = questions.map(q => 
+          q.groupId === id ? { ...q, groupId: undefined } : q
+        );
+      }
+      
       const reordered = questions.map((q, i) => ({ ...q, order: i }));
       const logicRules = state.survey.logicRules.filter(r => r.questionId !== id && r.targetQuestionId !== id);
       return {

@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { CircleDot, CheckSquare, Star, ArrowUpDown, GripVertical } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { CircleDot, CheckSquare, Star, ArrowUpDown, GripVertical, AlertCircle } from 'lucide-react';
 import { Question } from '@/types/survey';
 import { cn } from '@/lib/utils';
 import { useSurveyStore } from '@/store/useSurveyStore';
@@ -10,12 +10,18 @@ interface PreviewRendererProps {
   previewMode?: 'mobile' | 'desktop';
 }
 
+interface ValidationError {
+  message: string;
+}
+
 export const PreviewRenderer = ({ previewMode = 'desktop' }: PreviewRendererProps) => {
   const { survey } = useSurveyStore();
   const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string | string[] | number>>({});
   const [showWelcome, setShowWelcome] = useState(true);
   const [showThankYou, setShowThankYou] = useState(false);
+  const [error, setError] = useState<ValidationError | null>(null);
+  const [shuffledOptionsMap, setShuffledOptionsMap] = useState<Record<string, Question['options']>>({});
 
   const validQuestions = useMemo(
     () => survey.questions.filter(q => q.type !== 'group'),
@@ -24,10 +30,22 @@ export const PreviewRenderer = ({ previewMode = 'desktop' }: PreviewRendererProp
 
   const firstQuestionId = validQuestions[0]?.id || null;
 
+  useEffect(() => {
+    if (currentQuestionId) {
+      const question = survey.questions.find(q => q.id === currentQuestionId);
+      if (question && question.randomOptions && question.options && !shuffledOptionsMap[currentQuestionId]) {
+        const shuffled = [...question.options].sort(() => Math.random() - 0.5);
+        setShuffledOptionsMap(prev => ({ ...prev, [currentQuestionId]: shuffled }));
+      }
+    }
+  }, [currentQuestionId, survey.questions, shuffledOptionsMap]);
+
   const startSurvey = () => {
     setShowWelcome(false);
     setCurrentQuestionId(firstQuestionId);
     setAnswers({});
+    setShuffledOptionsMap({});
+    setError(null);
   };
 
   const restartSurvey = () => {
@@ -35,14 +53,65 @@ export const PreviewRenderer = ({ previewMode = 'desktop' }: PreviewRendererProp
     setShowThankYou(false);
     setCurrentQuestionId(null);
     setAnswers({});
+    setShuffledOptionsMap({});
+    setError(null);
   };
 
   const handleAnswer = (questionId: string, answer: string | string[] | number) => {
     setAnswers(prev => ({ ...prev, [questionId]: answer }));
+    setError(null);
+  };
+
+  const validateAnswer = (question: Question): ValidationError | null => {
+    if (!question.required) return null;
+
+    const answer = answers[question.id];
+
+    switch (question.type) {
+      case 'single':
+      case 'ranking':
+        if (!answer) {
+          return { message: '请选择一个选项' };
+        }
+        break;
+      case 'multiple':
+        const selectedCount = Array.isArray(answer) ? answer.length : 0;
+        if (selectedCount === 0) {
+          return { message: '请至少选择一个选项' };
+        }
+        if (question.minSelect && selectedCount < question.minSelect) {
+          return { message: `请至少选择 ${question.minSelect} 个选项` };
+        }
+        if (question.maxSelect && selectedCount > question.maxSelect) {
+          return { message: `最多只能选择 ${question.maxSelect} 个选项` };
+        }
+        break;
+      case 'text':
+        if (!answer || (typeof answer === 'string' && answer.trim() === '')) {
+          return { message: '请输入您的回答' };
+        }
+        break;
+      case 'rating':
+        if (!answer || (typeof answer === 'number' && answer === 0)) {
+          return { message: '请选择评分' };
+        }
+        break;
+    }
+
+    return null;
   };
 
   const handleNext = () => {
     if (!currentQuestionId) return;
+
+    const currentQuestion = survey.questions.find(q => q.id === currentQuestionId);
+    if (!currentQuestion) return;
+
+    const validationError = validateAnswer(currentQuestion);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
 
     const nextId = getNextQuestionId(
       currentQuestionId,
@@ -53,6 +122,7 @@ export const PreviewRenderer = ({ previewMode = 'desktop' }: PreviewRendererProp
 
     if (nextId) {
       setCurrentQuestionId(nextId);
+      setError(null);
     } else {
       setShowThankYou(true);
     }
@@ -63,6 +133,29 @@ export const PreviewRenderer = ({ previewMode = 'desktop' }: PreviewRendererProp
     const currentIndex = validQuestions.findIndex(q => q.id === currentQuestionId);
     if (currentIndex > 0) {
       setCurrentQuestionId(validQuestions[currentIndex - 1].id);
+      setError(null);
+    }
+  };
+
+  const handleSingleSelect = (questionId: string, value: string) => {
+    handleAnswer(questionId, value);
+  };
+
+  const handleMultipleToggle = (questionId: string, value: string) => {
+    const currentAnswer = answers[questionId];
+    const currentArray = Array.isArray(currentAnswer) ? currentAnswer : [];
+    
+    if (currentArray.includes(value)) {
+      const newAnswer = currentArray.filter(v => v !== value);
+      handleAnswer(questionId, newAnswer);
+    } else {
+      const question = survey.questions.find(q => q.id === questionId);
+      if (question?.maxSelect && currentArray.length >= question.maxSelect) {
+        setError({ message: `最多只能选择 ${question.maxSelect} 个选项` });
+        return;
+      }
+      const newAnswer = [...currentArray, value];
+      handleAnswer(questionId, newAnswer);
     }
   };
 
@@ -72,8 +165,8 @@ export const PreviewRenderer = ({ previewMode = 'desktop' }: PreviewRendererProp
 
   const getOptions = (question: Question) => {
     if (!question.options) return [];
-    if (question.randomOptions) {
-      return [...question.options].sort(() => Math.random() - 0.5);
+    if (question.randomOptions && shuffledOptionsMap[question.id]) {
+      return shuffledOptionsMap[question.id]!;
     }
     return question.options;
   };
@@ -86,9 +179,10 @@ export const PreviewRenderer = ({ previewMode = 'desktop' }: PreviewRendererProp
       case 'single':
         return (
           <div className="space-y-3">
-            {options.map((option, index) => (
-              <label
+            {options.map((option) => (
+              <div
                 key={option.id}
+                onClick={() => handleSingleSelect(question.id, option.value)}
                 className={cn(
                   'flex items-center gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all duration-200',
                   answer === option.value
@@ -105,7 +199,7 @@ export const PreviewRenderer = ({ previewMode = 'desktop' }: PreviewRendererProp
                   {answer === option.value && <div className="w-2 h-2 rounded-full bg-white" />}
                 </div>
                 <span className="text-sm text-zinc-700">{option.label}</span>
-              </label>
+              </div>
             ))}
           </div>
         );
@@ -116,8 +210,9 @@ export const PreviewRenderer = ({ previewMode = 'desktop' }: PreviewRendererProp
             {options.map((option) => {
               const isSelected = Array.isArray(answer) && answer.includes(option.value);
               return (
-                <label
+                <div
                   key={option.id}
+                  onClick={() => handleMultipleToggle(question.id, option.value)}
                   className={cn(
                     'flex items-center gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all duration-200',
                     isSelected
@@ -136,9 +231,16 @@ export const PreviewRenderer = ({ previewMode = 'desktop' }: PreviewRendererProp
                     )}
                   </div>
                   <span className="text-sm text-zinc-700">{option.label}</span>
-                </label>
+                </div>
               );
             })}
+            {(question.minSelect || question.maxSelect) && (
+              <p className="text-xs text-zinc-500 mt-2">
+                {question.minSelect && `最少选择 ${question.minSelect} 项`}
+                {question.minSelect && question.maxSelect && '，'}
+                {question.maxSelect && `最多选择 ${question.maxSelect} 项`}
+              </p>
+            )}
           </div>
         );
 
@@ -314,6 +416,13 @@ export const PreviewRenderer = ({ previewMode = 'desktop' }: PreviewRendererProp
             <p className="text-sm text-zinc-500 mb-6 bg-zinc-50 p-3 rounded-lg">
               {currentQuestion.description}
             </p>
+          )}
+
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2 animate-in">
+              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+              <span className="text-sm text-red-600">{error.message}</span>
+            </div>
           )}
 
           {renderQuestion(currentQuestion)}

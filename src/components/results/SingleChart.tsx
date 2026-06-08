@@ -16,7 +16,7 @@ export const SingleChart = ({ question, responses }: SingleChartProps) => {
   const [chartType, setChartType] = useState<'bar' | 'pie'>('bar');
   const stats = calculateQuestionStats(question, responses);
 
-  if (!stats || stats.type !== 'single' && stats.type !== 'ranking') return null;
+  if (!stats || (stats.type !== 'single' && stats.type !== 'multiple' && stats.type !== 'ranking')) return null;
 
   const data = stats.data.map(item => ({
     name: item.label.length > 8 ? item.label.slice(0, 8) + '...' : item.label,
@@ -24,6 +24,8 @@ export const SingleChart = ({ question, responses }: SingleChartProps) => {
     count: item.count,
     percentage: stats.totalCount > 0 ? ((item.count / stats.totalCount) * 100).toFixed(1) : 0,
   }));
+
+  const chartTitleSuffix = stats.type === 'multiple' ? '（多选）' : stats.type === 'ranking' ? '（排序）' : '';
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -44,7 +46,7 @@ export const SingleChart = ({ question, responses }: SingleChartProps) => {
     <Card hover>
       <CardHeader className="flex flex-row items-center justify-between">
         <div>
-          <h4 className="font-semibold text-zinc-900">{question.title}</h4>
+          <h4 className="font-semibold text-zinc-900">{question.title}{chartTitleSuffix}</h4>
           <p className="text-xs text-zinc-500 mt-1">
             共 {stats.answeredCount} 人回答
           </p>
